@@ -112,10 +112,12 @@ def main():
         print("\n--- 异常值过滤 (asc_area / desc_area) ---")
         feat_df, n_out_asc = filter_outliers_by_jump(feat_df, "asc_area")
         max_val = feat_df["asc_area"].max() if n_out_asc > 0 else None
-        print(f"  asc_area: 剔除 {n_out_asc} 条 (阈值 {max_val:.0f if max_val is not None else 'N/A'})")
+        print(f"  asc_area: 剔除 {n_out_asc} 条 (阈值 {f'{max_val:.0f}' if max_val is not None else 'N/A'})")
+        
         feat_df, n_out_desc = filter_outliers_by_jump(feat_df, "desc_area")
         max_val_d = feat_df["desc_area"].max() if n_out_desc > 0 else None
-        print(f"  desc_area: 剔除 {n_out_desc} 条 (阈值 {max_val_d:.0f if max_val_d is not None else 'N/A'})")
+        print(f"  desc_area: 剔除 {n_out_desc} 条 (阈值 {f'{max_val_d:.0f}' if max_val_d is not None else 'N/A'})")
+        
         print(f"  过滤后剩余: {len(feat_df)} / {len(feat_df) + n_out_asc + n_out_desc} 条")
 
         feat_out = os.path.join(base_dir, "all_features.parquet")
