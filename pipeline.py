@@ -1,8 +1,33 @@
 import sys
 import os
 import glob
+import numpy as np
 import pandas as pd
 import subprocess
+
+def find_jump_absolute_diff(data):
+    """
+    使用绝对一阶差分寻找跳跃点 (寻找绝对数值差距最大的一步)
+    """
+    sorted_data = np.sort(data)
+    diffs = np.diff(sorted_data)
+    jump_index = np.argmax(diffs)
+    threshold = sorted_data[jump_index]
+    next_value = sorted_data[jump_index + 1]
+    max_diff = diffs[jump_index]
+    return threshold, next_value, max_diff, jump_index
+
+def filter_outliers_by_jump(df, col):
+    """
+    对指定列用跳变点找阈值，剔除上方异常值
+    """
+    clean_data = df[col].dropna().values
+    if len(clean_data) < 10:
+        return df, 0
+    threshold, next_val, max_diff, idx = find_jump_absolute_diff(clean_data)
+    outlier_count = int((clean_data > threshold).sum())
+    filtered = df[df[col] <= threshold].copy()
+    return filtered, outlier_count
 
 def run(script, *args, check=True):
     """执行一个子脚本"""
@@ -82,6 +107,17 @@ def main():
         feat_df = pd.concat(all_features, ignore_index=True)
         feat_df["timestamp"] = pd.to_datetime(feat_df["timestamp"])
         feat_df = feat_df.sort_values("timestamp").reset_index(drop=True)
+
+        # 异常值过滤 (asc_area / desc_area)
+        print("\n--- 异常值过滤 (asc_area / desc_area) ---")
+        feat_df, n_out_asc = filter_outliers_by_jump(feat_df, "asc_area")
+        max_val = feat_df["asc_area"].max() if n_out_asc > 0 else None
+        print(f"  asc_area: 剔除 {n_out_asc} 条 (阈值 {max_val:.0f if max_val is not None else 'N/A'})")
+        feat_df, n_out_desc = filter_outliers_by_jump(feat_df, "desc_area")
+        max_val_d = feat_df["desc_area"].max() if n_out_desc > 0 else None
+        print(f"  desc_area: 剔除 {n_out_desc} 条 (阈值 {max_val_d:.0f if max_val_d is not None else 'N/A'})")
+        print(f"  过滤后剩余: {len(feat_df)} / {len(feat_df) + n_out_asc + n_out_desc} 条")
+
         feat_out = os.path.join(base_dir, "all_features.parquet")
         feat_df.to_parquet(feat_out, index=False)
         print(f"\nall_features: {len(feat_df)} 行 -> {feat_out}")
