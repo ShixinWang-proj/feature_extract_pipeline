@@ -1,0 +1,15 @@
+# 数据文件
+*.csv
+*.parquet
+
+# 输出目录
+output/
+segments/
+
+# Python 缓存
+__pycache__/
+*.pyc
+*.pyo
+
+# Jupyter
+.ipynb_checkpoints/
