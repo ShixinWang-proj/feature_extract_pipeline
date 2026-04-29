@@ -1,7 +1,6 @@
 import sys
 import os
 import pandas as pd
-import numpy as np
 from utils import resample_ppg_100hz
 
 if __name__ == "__main__":
@@ -27,12 +26,15 @@ if __name__ == "__main__":
     df["datetime"] = pd.to_datetime(df["datetime"])
     df = df.set_index("datetime").sort_index()
 
-    # 去重（同秒内重复时间戳）
-    df = df[~df.index.duplicated(keep="first")]
+    # 🌟 修复：已删除 df = df[~df.index.duplicated(keep="first")]，保留高频抖动帧
 
     print(f"原始: {len(df)} 行, {df.index[0]} → {df.index[-1]}")
 
     df_100hz = resample_ppg_100hz(df)
+    
+    if df_100hz.empty:
+        print("警告：重采样后数据为空。")
+        sys.exit(0)
 
     print(f"重采样后: {len(df_100hz)} 行, 采样率: 100Hz")
     df_100hz.to_parquet(out_path)

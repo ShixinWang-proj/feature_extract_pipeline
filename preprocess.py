@@ -6,7 +6,6 @@ import numpy as np
 if __name__ == "__main__":
     if len(sys.argv) < 2:
         print("用法: python preprocess.py <input_csv> [output_dir]")
-        print("示例: python preprocess.py raw.csv ./segments/")
         sys.exit(1)
 
     input_path = sys.argv[1]
@@ -15,6 +14,10 @@ if __name__ == "__main__":
 
     print(f"正在加载文件: {input_path} ...")
     df = pd.read_csv(input_path)
+
+    # 🌟 新增：在源头统一对 IED 取反，使得生理收缩期变为正向波峰
+    if "ied" in df.columns:
+        df["ied"] = -df["ied"]
 
     # --- 时间解析 ---
     df["datetime"] = pd.to_datetime(df["date"] + " " + df["time"], format="%d-%m-%Y %H:%M:%S")
@@ -28,8 +31,6 @@ if __name__ == "__main__":
     df = df[["datetime", "duration", "red", "ied", "accX", "accY", "accZ", "motion"]]
 
     # --- 按时间连续性拆分片段 ---
-    # 正常情况：同秒内 diff=0，跨秒 diff=1，都算连续
-    # 只有 diff > 1 才说明有数据丢失，需要拆分
     diff_seconds = df["datetime"].diff().dt.total_seconds()
     break_mask = diff_seconds > 1.0
     segment_ids = break_mask.cumsum()
