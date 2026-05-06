@@ -5,7 +5,6 @@ import pandas as pd
 import numpy as np
 from scipy.signal import butter, filtfilt
 from scipy.ndimage import median_filter
-import matplotlib.pyplot as plt
 
 def fast_hampel_filter(data, window_size=101, n_sigmas=3):
     """
@@ -128,29 +127,3 @@ if __name__ == "__main__":
         df.to_csv(out_file_path, index=False)
         
     print(f"🎉 数据已成功保存至: {out_file_path}")
-
-    # 6. 画图验证 (展示前 10 秒)
-    # 工业跑批时可以把画图部分注释掉以节约时间
-    print("📊 正在渲染前10秒数据对比图...")
-    t = np.linspace(0, total_points / fs, total_points)
-    view_start = 0
-    view_end = min(total_points, 10 * fs)
-
-    plt.figure(figsize=(12, 8))
-    plt.subplot(3, 1, 1)
-    plt.title("Raw IED (first 10s) - Interpolated")
-    plt.plot(t[view_start:view_end], raw_ppg[view_start:view_end], color="red")
-    plt.grid(True, alpha=0.3)
-
-    plt.subplot(3, 1, 2)
-    plt.title("Step 1: Hampel Filtered (Extreme Artifacts Removed)")
-    plt.plot(t[view_start:view_end], despiked[view_start:view_end], color="orange")
-    plt.grid(True, alpha=0.3)
-
-    plt.subplot(3, 1, 3)
-    plt.title("Step 2: Zero-Phase Bandpass Filtered (Baseline & Noise Removed)")
-    plt.plot(t[view_start:view_end], clean_ppg[view_start:view_end], color="green")
-    plt.grid(True, alpha=0.3)
-
-    plt.tight_layout()
-    plt.show()

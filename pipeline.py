@@ -5,16 +5,61 @@ import numpy as np
 import pandas as pd
 import subprocess
 
+def otsu_threshold(data):
+    """
+    一维Otsu大津法阈值计算，自动将数据分为两类
+    仅依赖numpy，无需额外依赖
+    """
+    unique_data = np.unique(data)
+    if len(unique_data) == 1:
+        # 所有值都相同，没有可分割的两类
+        return unique_data[0] + 1
+    
+    # 基于唯一值分箱，适配小数据场景
+    hist, bins = np.histogram(data, bins=len(unique_data))
+    hist_norm = hist / hist.sum()
+    
+    # 累积分布与累积均值
+    cumsum = np.cumsum(hist_norm)
+    cumsum_mean = np.cumsum(hist_norm * bins[:-1])
+    total_mean = cumsum_mean[-1]
+    
+    # 计算类间方差，找到最优分割阈值
+    between_var = (total_mean * cumsum - cumsum_mean) ** 2 / (cumsum * (1 - cumsum) + 1e-8)
+    max_idx = np.argmax(between_var)
+    
+    return bins[max_idx]
+
 def find_jump_absolute_diff(data):
     """
-    使用绝对一阶差分寻找跳跃点 (寻找绝对数值差距最大的一步)
+    改进后的跳跃点寻找逻辑：
+    1. 将所有相邻差分(jump)分为两类：大多数的小jump(I类)、少数的大jump(II类)
+    2. 在II类大jump中，找到最左侧的那个（也就是II类中最小的jump）
+    3. 以此为分割点，剔除右侧所有偏大的异常值
     """
     sorted_data = np.sort(data)
     diffs = np.diff(sorted_data)
-    jump_index = np.argmax(diffs)
+    
+    # 自动计算diff的分类阈值
+    t = otsu_threshold(diffs)
+    
+    # 找到所有大jump的位置
+    large_diff_indices = np.where(diffs > t)[0]
+    
+    if len(large_diff_indices) == 0:
+        # 没有检测到大jump，说明所有数据都是正常的
+        threshold = sorted_data[-1]
+        next_value = threshold
+        max_diff = 0
+        jump_index = len(sorted_data) - 1
+        return threshold, next_value, max_diff, jump_index
+    
+    # 取最左侧的大jump作为分割点（这就是II类中最小的jump的位置）
+    jump_index = large_diff_indices[0]
     threshold = sorted_data[jump_index]
     next_value = sorted_data[jump_index + 1]
     max_diff = diffs[jump_index]
+    
     return threshold, next_value, max_diff, jump_index
 
 def filter_outliers_by_jump(df, col):
