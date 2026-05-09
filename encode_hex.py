@@ -65,5 +65,5 @@ def encode_dataframe_to_hex(df, output_file='output.txt'):
 # ==========================================
 if __name__ == '__main__':
 
-    df = pd.read_csv("./outpu1/da_result.csv")
-    encode_dataframe_to_hex(df, 'demo_hex_output.txt')
+    df = pd.read_csv("./output_may/aligned_features.csv")
+    encode_dataframe_to_hex(df, 'hex_may.txt')

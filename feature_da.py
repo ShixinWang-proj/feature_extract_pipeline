@@ -1,5 +1,6 @@
 import os
 import argparse
+import pickle
 import numpy as np
 import pandas as pd
 from pathlib import Path
@@ -45,10 +46,25 @@ def extract_target_features(file_path):
     except Exception:
         return None
 
-def build_target_distributions(target_dir):
+def build_target_distributions(target_dir, use_cache=True):
     target_base = Path(target_dir)
+    cache_path = target_base / "_target_dist_cache.pkl"
+
+    # --- 尝试从缓存加载 ---
+    if use_cache and cache_path.exists():
+        cache_mtime = cache_path.stat().st_mtime
+        csv_files = list(target_base.rglob("*.csv"))
+        # 检查是否有 CSV 文件比缓存新（说明数据有更新）
+        newer = [f for f in csv_files if f.stat().st_mtime > cache_mtime]
+        if not newer:
+            print(f"📦 从缓存加载 Target 分布: {cache_path}")
+            with open(cache_path, "rb") as f:
+                return pickle.load(f)
+        else:
+            print(f"🔄 检测到 {len(newer)} 个文件已更新，重新构建分布...")
+
+    # --- 从原始文件构建 ---
     csv_files = list(target_base.rglob("*.csv"))
-    
     if not csv_files:
         raise FileNotFoundError(f"在 {target_dir} 中未找到 Target CSV 文件。")
 
@@ -76,6 +92,11 @@ def build_target_distributions(target_dir):
             target_dists[feat] = merged_data
         else:
             target_dists[feat] = np.array([])
+
+    # --- 保存缓存 ---
+    with open(cache_path, "wb") as f:
+        pickle.dump(target_dists, f)
+    print(f"💾 分布已缓存至: {cache_path}")
 
     return target_dists
 
@@ -139,6 +160,7 @@ if __name__ == "__main__":
     parser.add_argument("-s", "--source", required=True, type=str, help="[必填] 源 CSV 文件路径")
     parser.add_argument("-t", "--target_dir", required=True, type=str, help="[必填] Target 域分布文件夹路径")
     parser.add_argument("-o", "--output", required=False, type=str, help="[选填] 输出的 CSV 路径。")
+    parser.add_argument("--no-cache", action="store_true", help="强制重新构建 Target 分布，忽略缓存。")
 
     args = parser.parse_args()
 
@@ -161,7 +183,7 @@ if __name__ == "__main__":
     print("="*50)
 
     # 1. 构建 Target 分布
-    target_distributions = build_target_distributions(target_dir)
+    target_distributions = build_target_distributions(target_dir, use_cache=not args.no_cache)
 
     # 2. 读取源 CSV
     print("\n⏳ 正在加载源数据...")
