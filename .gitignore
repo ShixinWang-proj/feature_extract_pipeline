@@ -1,6 +1,7 @@
 # 数据文件
 *.csv
 *.parquet
+*.txt
 
 # 输出目录
 output/

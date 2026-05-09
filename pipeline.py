@@ -3,69 +3,60 @@ import os
 import glob
 import numpy as np
 import pandas as pd
-import subprocess
+
+from preprocess import preprocess_and_split
+from resample import resample_to_100hz
+from highpass import run_highpass_filter
+from extract_peaks import extract_peaks_and_valleys
+from extract_features import extract_beat_features
+from features import extract_rri_timeseries
+
 
 def otsu_threshold(data):
-    """
-    一维Otsu大津法阈值计算，自动将数据分为两类
-    仅依赖numpy，无需额外依赖
-    """
+    """一维Otsu大津法阈值计算"""
     unique_data = np.unique(data)
     if len(unique_data) == 1:
-        # 所有值都相同，没有可分割的两类
         return unique_data[0] + 1
-    
-    # 基于唯一值分箱，适配小数据场景
+
     hist, bins = np.histogram(data, bins=len(unique_data))
     hist_norm = hist / hist.sum()
-    
-    # 累积分布与累积均值
+
     cumsum = np.cumsum(hist_norm)
     cumsum_mean = np.cumsum(hist_norm * bins[:-1])
     total_mean = cumsum_mean[-1]
-    
-    # 计算类间方差，找到最优分割阈值
+
     between_var = (total_mean * cumsum - cumsum_mean) ** 2 / (cumsum * (1 - cumsum) + 1e-8)
     max_idx = np.argmax(between_var)
-    
+
     return bins[max_idx]
 
+
 def find_jump_absolute_diff(data):
-    """
-    改进后的跳跃点寻找逻辑：
-    1. 将所有相邻差分(jump)分为两类：大多数的小jump(I类)、少数的大jump(II类)
-    2. 在II类大jump中，找到最左侧的那个（也就是II类中最小的jump）
-    3. 以此为分割点，剔除右侧所有偏大的异常值
-    """
+    """Otsu 分类后取最左侧大跳变点作为分割阈值"""
     sorted_data = np.sort(data)
     diffs = np.diff(sorted_data)
-    
-    # 自动计算diff的分类阈值
+
     t = otsu_threshold(diffs)
-    
-    # 找到所有大jump的位置
+
     large_diff_indices = np.where(diffs > t)[0]
-    
+
     if len(large_diff_indices) == 0:
-        # 没有检测到大jump，说明所有数据都是正常的
         threshold = sorted_data[-1]
         next_value = threshold
         max_diff = 0
         jump_index = len(sorted_data) - 1
         return threshold, next_value, max_diff, jump_index
-    
-    # 取最左侧的大jump作为分割点（这就是II类中最小的jump的位置）
+
     jump_index = large_diff_indices[0]
     threshold = sorted_data[jump_index]
     next_value = sorted_data[jump_index + 1]
     max_diff = diffs[jump_index]
-    
+
     return threshold, next_value, max_diff, jump_index
 
+
 def filter_outliers_by_jump(df, col):
-    """
-    对指定列用跳变点找阈值，剔除上方异常值
-    """
+    """对指定列用跳变点找阈值，剔除上方异常值"""
     clean_data = df[col].dropna().values
     if len(clean_data) < 10:
         return df, 0
@@ -74,11 +65,6 @@ def filter_outliers_by_jump(df, col):
     filtered = df[df[col] <= threshold].copy()
     return filtered, outlier_count
 
-def run(script, *args, check=True):
-    """执行一个子脚本"""
-    cmd = [sys.executable, script, *args]
-    print(f"  ▶ {' '.join(cmd)}")
-    return subprocess.run(cmd, check=check)
 
 def main():
     if len(sys.argv) < 2:
@@ -93,7 +79,7 @@ def main():
     # ========== Step 0: 预处理 & 片段拆分 ==========
     seg_dir = os.path.join(base_dir, "segments")
     print("\n=== [0/5] 预处理 & 片段拆分 ===")
-    run("preprocess.py", input_csv, seg_dir)
+    preprocess_and_split(input_csv, seg_dir)
 
     segments = sorted(glob.glob(os.path.join(seg_dir, "segment_*.csv")))
     if not segments:
@@ -115,27 +101,33 @@ def main():
         # Step 1: 100Hz 重采样
         print("\n[1/5] 100Hz 重采样")
         resampled = f"{prefix}_100hz.parquet"
-        run("resample.py", seg_path, resampled)
+        if not resample_to_100hz(seg_path, resampled):
+            print(f"  ⚠ 重采样后数据为空，跳过片段 {seg_name}")
+            continue
 
         # Step 2: 滤波清洗
         print("\n[2/5] 滤波清洗")
         cleaned = f"{prefix}_clean.parquet"
-        run("highpass.py", resampled, "100", cleaned)
+        if not run_highpass_filter(resampled, cleaned):
+            print(f"  ⚠ 滤波失败，跳过片段 {seg_name}")
+            continue
 
         # Step 3: 峰谷检测 + HRV 质控
         print("\n[3/5] 峰谷检测 + HRV 质控")
         peaks = f"{prefix}_peaks.parquet"
-        run("extract_peaks.py", cleaned, peaks, "100")
+        if not extract_peaks_and_valleys(cleaned, peaks):
+            print(f"  ⚠ 波峰提取失败，跳过片段 {seg_name}")
+            continue
 
         # Step 4: 逐拍特征提取
         print("\n[4/5] 逐拍特征提取")
         features_path = f"{prefix}_features.parquet"
-        run("extract_features.py", peaks, features_path)
+        extract_beat_features(peaks, features_path)
 
         # Step 5: RRI 时间序列
         print("\n[5/5] RRI 时间序列")
         rri_path = f"{prefix}_rri.parquet"
-        run("features.py", peaks, rri_path)
+        extract_rri_timeseries(peaks, rri_path)
 
         # 收集结果
         if os.path.exists(features_path):

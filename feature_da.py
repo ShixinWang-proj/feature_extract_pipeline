@@ -6,22 +6,42 @@ from pathlib import Path
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from tqdm import tqdm
 
+
+def _read_auto(path, **kwargs):
+    """自动识别文件类型读取数据（parquet / CSV 带编码兜底）"""
+    path = Path(path)
+    if path.suffix in ('.parquet', '.pq'):
+        return pd.read_parquet(path, **kwargs)
+
+    # CSV 路径：依次尝试编码 + 引擎兜底
+    kwargs.setdefault('on_bad_lines', 'warn')
+    for enc in ['utf-8', 'gbk', 'latin-1']:
+        for engine in ['c', 'python']:
+            try:
+                return pd.read_csv(path, encoding=enc, engine=engine, **kwargs)
+            except (UnicodeDecodeError, pd.errors.ParserError):
+                continue
+    raise ValueError(f"无法识别文件格式或编码: {path}")
+
 # ==========================================
 # 阶段 A: 获取 Target 分布
 # ==========================================
+_TARGET_FEATURES = ["area_up", "area_down", "motion"]
+
+
 def extract_target_features(file_path):
     try:
-        df = pd.read_csv(file_path)
+        df = _read_auto(file_path)
         if df.empty:
             return None
-        # Target 域的特征名依然是 area_up 和 area_down
-        area_up_raw = df["area_up"].dropna().values if "area_up" in df.columns else np.array([])
-        area_down_raw = df["area_down"].dropna().values if "area_down" in df.columns else np.array([])
-        step = 100
-        return {
-            "area_up": area_up_raw[::step],
-            "area_down": area_down_raw[::step]
-        }
+        result = {}
+        for feat in _TARGET_FEATURES:
+            if feat in df.columns:
+                raw = df[feat].dropna().values
+                result[feat] = raw[::100]
+            else:
+                result[feat] = np.array([])
+        return result
     except Exception:
         return None
 
@@ -33,19 +53,20 @@ def build_target_distributions(target_dir):
         raise FileNotFoundError(f"在 {target_dir} 中未找到 Target CSV 文件。")
 
     print(f"📊 正在从 {len(csv_files)} 个文件中构建 Target 分布...")
-    global_data = {"area_up": [], "area_down": []}
+    global_data = {f: [] for f in _TARGET_FEATURES}
     workers = max(1, os.cpu_count() - 1)
-    
+
     with ProcessPoolExecutor(max_workers=workers) as executor:
         futures = {executor.submit(extract_target_features, fp): fp for fp in csv_files}
         for future in tqdm(as_completed(futures), total=len(futures), desc="提取 Target", colour="green"):
             res = future.result()
             if res:
-                global_data["area_up"].append(res["area_up"])
-                global_data["area_down"].append(res["area_down"])
+                for feat in _TARGET_FEATURES:
+                    if len(res.get(feat, [])) > 0:
+                        global_data[feat].append(res[feat])
 
     target_dists = {}
-    for feat in ["area_up", "area_down"]:
+    for feat in _TARGET_FEATURES:
         if global_data[feat]:
             merged_data = np.concatenate(global_data[feat])
             p01 = np.percentile(merged_data, 1)
@@ -55,7 +76,7 @@ def build_target_distributions(target_dir):
             target_dists[feat] = merged_data
         else:
             target_dists[feat] = np.array([])
-            
+
     return target_dists
 
 # ==========================================
@@ -144,12 +165,13 @@ if __name__ == "__main__":
 
     # 2. 读取源 CSV
     print("\n⏳ 正在加载源数据...")
-    input_df = pd.read_csv(source_path)
+    input_df = _read_auto(source_path)
 
     # 3. 定义源列名到目标列名的映射关系
     my_column_mapping = {
         "asc_area": "area_up",
-        "desc_area": "area_down"
+        "desc_area": "area_down",
+        "motion": "motion",
     }
 
     # 4. 执行转换
@@ -160,23 +182,7 @@ if __name__ == "__main__":
         feature_mapping=my_column_mapping
     )
 
-    # ------------------ 新增/修改功能 ------------------
-    # 5. 处理 motion 列 (Min-Max 映射到 0-20，并转换为整数)
-    if "motion" in aligned_df.columns:
-        print("⏳ 正在将 motion 列映射到 0-20 范围 (整数)...")
-        min_val = aligned_df["motion"].min()
-        max_val = aligned_df["motion"].max()
-        
-        if max_val > min_val:  # 防止除以 0 的情况
-            # 先计算映射，再四舍五入(.round())，最后转为整数(.astype(int))
-            aligned_df["motion"] = ((aligned_df["motion"] - min_val) / (max_val - min_val) * 20).round().astype(int)
-        else:
-            print("⚠️ motion 列的所有值相同，跳过 0-20 映射。")
-    else:
-        print("⚠️ 源数据中未检测到 'motion' 列，跳过 0-20 映射。")
-    # ----------------------------------------------
-
-    # 6. 保存结果
+    # 5. 保存结果
     output_path.parent.mkdir(parents=True, exist_ok=True)
     aligned_df.to_csv(output_path, index=False)
     print(f"\n✅ 转换圆满完成！数据已保存至:\n{output_path}")

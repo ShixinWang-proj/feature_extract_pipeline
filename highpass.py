@@ -59,6 +59,40 @@ def process_ppg_signal_large_scale(raw_ppg, fs=100):
     
     return despiked_ppg, filtered_ppg
 
+def run_highpass_filter(input_parquet, output_parquet, fs=100):
+    """加载重采样数据，执行滤波流水线，保存结果"""
+    if not os.path.exists(input_parquet):
+        print(f"【错误】找不到文件: {input_parquet}")
+        return False
+
+    print(f"正在加载文件: {input_parquet} ...")
+    df = pd.read_parquet(input_parquet).reset_index()
+
+    if "ied" not in df.columns:
+        print("【错误】数据中找不到 'ied' 列，请检查表头名称。")
+        return False
+
+    raw_ppg = df["ied"].interpolate(method='linear').bfill().ffill().to_numpy(dtype=np.float64)
+    total_points = len(raw_ppg)
+    print(f"✅ 已加载 {total_points} 个 ied 数据点 (采样率: {fs}Hz)")
+
+    print("🚀 开始执行滤波流水线 (去极值 + 零相移带通)...")
+    start_time = time.time()
+
+    despiked, clean_ppg = process_ppg_signal_large_scale(raw_ppg, fs=fs)
+
+    end_time = time.time()
+    print(f"⏱️ 核心处理完成！总耗时: {end_time - start_time:.3f} 秒")
+
+    print("💾 正在将处理结果写入本地文件...")
+    df['ied_despiked'] = despiked
+    df['ied_clean'] = clean_ppg
+
+    df.to_parquet(output_parquet)
+    print(f"🎉 数据已成功保存至: {output_parquet}")
+    return True
+
+
 # ==========================================
 # 终端执行主入口
 # ==========================================
@@ -81,49 +115,8 @@ if __name__ == "__main__":
         else:
             out_file_path = arg
 
-    if not os.path.exists(file_path):
-        print(f"【错误】找不到文件: {file_path}")
-        sys.exit(1)
-
-    # 2. 读取文件
-    print(f"正在加载文件: {file_path} ...")
-    if file_path.endswith(".parquet"):
-        df = pd.read_parquet(file_path).reset_index()
-    else:
-        df = pd.read_csv(file_path)
-
-    # 3. 提取特征并进行防御性 NaN 处理 (极其重要)
-    if "ied" not in df.columns:
-        print("【错误】数据中找不到 'ied' 列，请检查表头名称。")
-        sys.exit(1)
-
-    # 线性插值修补丢包断点 -> 前后向填充边缘空值 -> 转换为 C 连续的 float64 数组
-    raw_ppg = df["ied"].interpolate(method='linear').bfill().ffill().to_numpy(dtype=np.float64)
-    total_points = len(raw_ppg)
-    print(f"✅ 已加载 {total_points} 个 ied 数据点 (采样率: {fs}Hz)")
-
-    # 4. 核心处理计时开始
-    print("🚀 开始执行滤波流水线 (去极值 + 零相移带通)...")
-    start_time = time.time()
-
-    despiked, clean_ppg = process_ppg_signal_large_scale(raw_ppg, fs=fs)
-
-    end_time = time.time()
-    print(f"⏱️ 核心处理完成！总耗时: {end_time - start_time:.3f} 秒")
-
-    # 5. 数据落盘保存
-    print("💾 正在将处理结果写入本地文件...")
-    # 追加为新列，不破坏原始数据
-    df['ied_despiked'] = despiked
-    df['ied_clean'] = clean_ppg
-
     if out_file_path is None:
         base_name, ext = os.path.splitext(file_path)
         out_file_path = f"{base_name}_processed{ext}"
 
-    if out_file_path.endswith(".parquet"):
-        df.to_parquet(out_file_path)
-    else:
-        df.to_csv(out_file_path, index=False)
-        
-    print(f"🎉 数据已成功保存至: {out_file_path}")
+    run_highpass_filter(file_path, out_file_path, fs=fs)
